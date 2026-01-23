@@ -1,0 +1,29 @@
+# Build artifacts
+build/
+
+# Test coverage reports
+coverage.out
+coverage.html
+
+# Go workspace files
+*.work
+
+# IDE and editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Cookie files (sensitive credentials)
+autopkgtest-cookies.txt
+*-cookies.txt
+*.cookie
+
+# Temporary files
+*.tmp
+*.log
