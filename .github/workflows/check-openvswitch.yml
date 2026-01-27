@@ -1,0 +1,32 @@
+name: Check OVS Autopkgtests
+
+on:
+  schedule:
+    # Run weekly on Monday at 9:00 UTC
+    - cron: '0 9 * * 1'
+  workflow_dispatch:  # Allow manual triggering
+
+jobs:
+  check-openvswitch:
+    name: Check OpenVSwitch Package Tests
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      
+      - name: Build CLI tool
+        run: make build
+      
+      - name: Check OpenVSwitch autopkgtests
+        run: |
+          # Run the autopkgtest-cli tool for openvswitch package
+          ./build/autopkgtest-cli openvswitch
+          
+          # The tool exits with non-zero status if tests are in error state,
+          # this will cause the workflow to fail
