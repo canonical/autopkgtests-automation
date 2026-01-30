@@ -106,7 +106,7 @@ func TestNewScraper(t *testing.T) {
 
 func TestParseHTMLWithErrors(t *testing.T) {
 	s := NewScraper()
-	results, err := s.ParseHTML(mockHTMLWithErrors, "ovn")
+	results, err := s.ParseHTML(mockHTMLWithErrors, "ovn", nil)
 
 	if err != nil {
 		t.Fatalf("ParseHTML failed: %v", err)
@@ -137,7 +137,7 @@ func TestParseHTMLWithErrors(t *testing.T) {
 
 func TestParseHTMLWithoutErrors(t *testing.T) {
 	s := NewScraper()
-	results, err := s.ParseHTML(mockHTMLWithoutErrors, "test-pkg")
+	results, err := s.ParseHTML(mockHTMLWithoutErrors, "test-pkg", nil)
 
 	if err != nil {
 		t.Fatalf("ParseHTML failed: %v", err)
@@ -154,7 +154,7 @@ func TestParseHTMLWithoutErrors(t *testing.T) {
 
 func TestParseHTMLEmpty(t *testing.T) {
 	s := NewScraper()
-	results, err := s.ParseHTML(mockHTMLEmpty, "empty-pkg")
+	results, err := s.ParseHTML(mockHTMLEmpty, "empty-pkg", nil)
 
 	if err != nil {
 		t.Fatalf("ParseHTML failed: %v", err)
@@ -282,7 +282,7 @@ func TestExtractStatus(t *testing.T) {
 	`
 
 	s := NewScraper()
-	results, err := s.ParseHTML(htmlWithStatus, "test")
+	results, err := s.ParseHTML(htmlWithStatus, "test", nil)
 
 	if err != nil {
 		t.Fatalf("ParseHTML failed: %v", err)
@@ -297,7 +297,7 @@ func TestExtractStatus(t *testing.T) {
 func TestGetNodeText(t *testing.T) {
 	htmlStr := "<div>Test <span>nested</span> text</div>"
 	s := NewScraper()
-	results, err := s.ParseHTML(htmlStr, "test")
+	results, err := s.ParseHTML(htmlStr, "test", nil)
 
 	if err != nil {
 		t.Fatalf("ParseHTML failed: %v", err)
@@ -306,6 +306,98 @@ func TestGetNodeText(t *testing.T) {
 	// Just verify parsing doesn't crash with nested elements
 	if results == nil {
 		t.Error("Expected non-nil results")
+	}
+}
+
+func TestFilterByRelease(t *testing.T) {
+	s := NewScraper()
+	filter := &Filter{Release: "noble"}
+	results, err := s.ParseHTML(mockHTMLWithErrors, "ovn", filter)
+
+	if err != nil {
+		t.Fatalf("ParseHTML with filter failed: %v", err)
+	}
+
+	// All results should be for noble release only
+	for _, test := range results.Tests {
+		if !strings.EqualFold(test.Release, "noble") {
+			t.Errorf("Expected only noble release, got %s", test.Release)
+		}
+	}
+}
+
+func TestFilterByArchitecture(t *testing.T) {
+	s := NewScraper()
+	filter := &Filter{Architecture: "amd64"}
+	results, err := s.ParseHTML(mockHTMLWithErrors, "ovn", filter)
+
+	if err != nil {
+		t.Fatalf("ParseHTML with filter failed: %v", err)
+	}
+
+	// All results should be for amd64 architecture only
+	for _, test := range results.Tests {
+		if !strings.EqualFold(test.Architecture, "amd64") {
+			t.Errorf("Expected only amd64 architecture, got %s", test.Architecture)
+		}
+	}
+}
+
+func TestFilterByReleaseAndArchitecture(t *testing.T) {
+	s := NewScraper()
+	filter := &Filter{
+		Release:      "jammy",
+		Architecture: "arm64",
+	}
+	results, err := s.ParseHTML(mockHTMLWithErrors, "ovn", filter)
+
+	if err != nil {
+		t.Fatalf("ParseHTML with filter failed: %v", err)
+	}
+
+	// Should have exactly 1 result: jammy + arm64
+	if len(results.Tests) != 1 {
+		t.Errorf("Expected 1 result for jammy/arm64, got %d", len(results.Tests))
+	}
+
+	if len(results.Tests) > 0 {
+		test := results.Tests[0]
+		if !strings.EqualFold(test.Release, "jammy") {
+			t.Errorf("Expected jammy release, got %s", test.Release)
+		}
+		if !strings.EqualFold(test.Architecture, "arm64") {
+			t.Errorf("Expected arm64 architecture, got %s", test.Architecture)
+		}
+	}
+}
+
+func TestFetchPackageResultsFiltered(t *testing.T) {
+	// Create a mock HTTP server
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/packages/ovn" {
+			w.WriteHeader(http.StatusOK)
+			w.Write([]byte(mockHTMLWithErrors))
+		} else {
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer server.Close()
+
+	// Create scraper with mock server URL
+	s := NewScraper()
+	s.BaseURL = server.URL
+
+	filter := &Filter{Release: "noble"}
+	results, err := s.FetchPackageResultsFiltered("ovn", filter)
+	if err != nil {
+		t.Fatalf("FetchPackageResultsFiltered failed: %v", err)
+	}
+
+	// All results should be for noble
+	for _, test := range results.Tests {
+		if !strings.EqualFold(test.Release, "noble") {
+			t.Errorf("Expected only noble release, got %s", test.Release)
+		}
 	}
 }
 

@@ -28,6 +28,12 @@ type PackageResults struct {
 	Errors  []TestResult
 }
 
+// Filter represents filter criteria for test results
+type Filter struct {
+	Release      string // Filter by specific release (e.g., "noble", "jammy")
+	Architecture string // Filter by specific architecture (e.g., "amd64", "arm64")
+}
+
 // Scraper handles fetching and parsing autopkgtest results
 type Scraper struct {
 	BaseURL string
@@ -44,6 +50,11 @@ func NewScraper() *Scraper {
 
 // FetchPackageResults fetches and parses autopkgtest results for a package
 func (s *Scraper) FetchPackageResults(packageName string) (*PackageResults, error) {
+	return s.FetchPackageResultsFiltered(packageName, nil)
+}
+
+// FetchPackageResultsFiltered fetches and parses autopkgtest results for a package with optional filtering
+func (s *Scraper) FetchPackageResultsFiltered(packageName string, filter *Filter) (*PackageResults, error) {
 	url := fmt.Sprintf("%s/packages/%s", s.BaseURL, packageName)
 
 	resp, err := s.Client.Get(url)
@@ -61,11 +72,11 @@ func (s *Scraper) FetchPackageResults(packageName string) (*PackageResults, erro
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	return s.ParseHTML(string(body), packageName)
+	return s.ParseHTML(string(body), packageName, filter)
 }
 
 // ParseHTML parses the HTML content and extracts test results
-func (s *Scraper) ParseHTML(htmlContent string, packageName string) (*PackageResults, error) {
+func (s *Scraper) ParseHTML(htmlContent string, packageName string, filter *Filter) (*PackageResults, error) {
 	results := &PackageResults{
 		Package: packageName,
 		Tests:   []TestResult{},
@@ -80,6 +91,11 @@ func (s *Scraper) ParseHTML(htmlContent string, packageName string) (*PackageRes
 	// Parse the HTML to extract test results from the matrix table
 	s.parseMatrixTable(doc, results)
 
+	// Apply filters if provided
+	if filter != nil {
+		results.Tests = s.applyFilter(results.Tests, filter)
+	}
+
 	// Filter errors (tests with non-passing status)
 	for _, test := range results.Tests {
 		if !isPassingStatus(test.Status) {
@@ -88,6 +104,30 @@ func (s *Scraper) ParseHTML(htmlContent string, packageName string) (*PackageRes
 	}
 
 	return results, nil
+}
+
+// applyFilter filters test results based on the provided criteria
+func (s *Scraper) applyFilter(tests []TestResult, filter *Filter) []TestResult {
+	if filter == nil {
+		return tests
+	}
+
+	var filtered []TestResult
+	for _, test := range tests {
+		// Filter by release if specified
+		if filter.Release != "" && !strings.EqualFold(test.Release, filter.Release) {
+			continue
+		}
+
+		// Filter by architecture if specified
+		if filter.Architecture != "" && !strings.EqualFold(test.Architecture, filter.Architecture) {
+			continue
+		}
+
+		filtered = append(filtered, test)
+	}
+
+	return filtered
 }
 
 // isPassingStatus checks if a status indicates a passing test

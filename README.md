@@ -79,9 +79,23 @@ Show all test results (not just errors):
 autopkgtest-cli check -package ovn -verbose
 ```
 
-### Trigger Tests (WIP)
+Filter results by release (Ubuntu version):
 
-Trigger an autopkgtest for a package:
+```bash
+autopkgtest-cli check -package ovn -release noble
+```
+
+Filter results by architecture:
+
+```bash
+autopkgtest-cli check -package ovn -arch amd64
+```
+
+Combine filters for specific release/architecture:
+
+```bash
+autopkgtest-cli check -package ovn -release noble -arch amd64 -verbose
+```
 
 ```bash
 autopkgtest-cli trigger -package ovn -arch amd64,arm64 -suite noble
@@ -105,10 +119,15 @@ autopkgtest-cli check [flags]
 
 Flags:
   -package string    Package name to check (required)
-  -verbose          Show all test results, not just errors
+  -verbose           Show all test results, not just errors
+  -release string    Filter by specific Ubuntu release (optional, e.g., noble, jammy)
+  -arch string       Filter by specific architecture (optional, e.g., amd64, arm64)
 ```
 
-#### Trigger Command (WIP)
+**Filtering Examples:**
+- Check only noble results: `-release noble`
+- Check only amd64 results: `-arch amd64`
+- Check noble/amd64 combination: `-release noble -arch amd64`
 
 ```
 autopkgtest-cli trigger [flags]

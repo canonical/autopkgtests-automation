@@ -23,8 +23,8 @@ func main() {
 	// Check command flags
 	checkPackage := checkCmd.String("package", "", "Package name to check (required)")
 	checkVerbose := checkCmd.Bool("verbose", false, "Show all test results, not just errors")
-
-	// Trigger command flags
+	checkRelease := checkCmd.String("release", "", "Filter by specific release (optional, e.g., noble, jammy)")
+	checkArch := checkCmd.String("arch", "", "Filter by specific architecture (optional, e.g., amd64, arm64)")
 	triggerPackage := triggerCmd.String("package", "", "Package name to trigger test for (required)")
 	triggerVersion := triggerCmd.String("version", "", "Package version (optional)")
 	triggerArch := triggerCmd.String("arch", "", "Comma-separated list of architectures (optional)")
@@ -45,7 +45,7 @@ func main() {
 			checkCmd.PrintDefaults()
 			os.Exit(1)
 		}
-		handleCheck(*checkPackage, *checkVerbose)
+		handleCheck(*checkPackage, *checkVerbose, *checkRelease, *checkArch)
 
 	case "trigger":
 		triggerCmd.Parse(os.Args[2:])
@@ -89,21 +89,41 @@ func printUsage() {
 		"\tversion\t\tShow version information\n" +
 		"\thelp\t\tShow this help message\n\n" +
 		"Check command:\n" +
-		"\tautopkgtest-cli check -package <name> [-verbose]\n\n" +
-		"Trigger command:\n" +
-		"\tautopkgtest-cli trigger -package <name> [-version <ver>] [-arch <archs>] [-suite <suite>] [-trigger <pkg>]\n\n" +
+		"\tautopkgtest-cli check -package <name> [-verbose] [-release <release>] [-arch <arch>]\n\n" +
+		"Check options:\n" +
+		"\t-package string      Package name (required)\n" +
+		"\t-verbose             Show all test results, not just errors\n" +
+		"\t-release string      Filter by release (optional, e.g., noble, jammy)\n" +
+		"\t-arch string         Filter by architecture (optional, e.g., amd64, arm64)\n\n" +
 		"Examples:\n" +
 		"\tautopkgtest-cli check -package ovn\n" +
 		"\tautopkgtest-cli check -package ovn -verbose\n" +
 		"\tautopkgtest-cli trigger -package ovn -arch amd64,arm64 -suite noble\n")
 }
 
-func handleCheck(packageName string, verbose bool) {
+func handleCheck(packageName string, verbose bool, release, arch string) {
 	fmt.Printf("Checking autopkgtest results for package: %s\n", packageName)
+	if release != "" || arch != "" {
+		fmt.Print("Filters: ")
+		if release != "" {
+			fmt.Printf("release=%s ", release)
+		}
+		if arch != "" {
+			fmt.Printf("arch=%s", arch)
+		}
+		fmt.Println()
+	}
 	fmt.Println()
 
 	s := scraper.NewScraper()
-	results, err := s.FetchPackageResults(packageName)
+	var filter *scraper.Filter
+	if release != "" || arch != "" {
+		filter = &scraper.Filter{
+			Release:      release,
+			Architecture: arch,
+		}
+	}
+	results, err := s.FetchPackageResultsFiltered(packageName, filter)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error fetching results: %v\n", err)
 		os.Exit(1)
