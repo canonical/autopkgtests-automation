@@ -1,0 +1,95 @@
+name: Trigger Autopkgtest
+
+on:
+  workflow_dispatch:
+    inputs:
+      package:
+        description: 'Package name to test'
+        required: true
+        type: string
+      suite:
+        description: 'Ubuntu release (e.g., noble, jammy, mantic)'
+        required: true
+        type: string
+        default: 'noble'
+      version:
+        description: 'Package version (optional)'
+        required: false
+        type: string
+      architectures:
+        description: 'Comma-separated architectures (e.g., amd64,arm64)'
+        required: false
+        type: string
+        default: 'amd64'
+      triggers:
+        description: 'Comma-separated triggers (optional, e.g., systemd/259-1ubuntu3,dhcpcd/1:10.3.0-7)'
+        required: false
+        type: string
+      ppa:
+        description: 'PPA to test against (optional, e.g., user/ppa-name)'
+        required: false
+        type: string
+      all-proposed:
+        description: 'Install all packages from proposed pocket'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+jobs:
+  trigger-test:
+    name: Trigger Autopkgtest
+    runs-on: ubuntu-latest
+    # Only allow workflow to run from main branch (project maintainers)
+    if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: 'go.mod'
+      
+      - name: Build autopkgtest-cli
+        run: make build
+      
+      - name: Build trigger command
+        id: build-cmd
+        run: |
+          # Build command WITHOUT credentials flag (to avoid exposure in logs)
+          CMD="./build/autopkgtest-cli trigger -package ${{ inputs.package }} -suite ${{ inputs.suite }} --wait --timeout 3h --poll-interval 5m"
+          
+          if [ -n "${{ inputs.version }}" ]; then
+            CMD="$CMD -version ${{ inputs.version }}"
+          fi
+          
+          if [ -n "${{ inputs.architectures }}" ]; then
+            CMD="$CMD -arch ${{ inputs.architectures }}"
+          fi
+          
+          if [ -n "${{ inputs.triggers }}" ]; then
+            CMD="$CMD -trigger ${{ inputs.triggers }}"
+          fi
+          
+          if [ -n "${{ inputs.ppa }}" ]; then
+            CMD="$CMD -ppa ${{ inputs.ppa }}"
+          fi
+          
+          if [ "${{ inputs.all-proposed }}" = "true" ]; then
+            CMD="$CMD -all-proposed"
+          fi
+          
+          echo "command=$CMD" >> $GITHUB_OUTPUT
+        shell: bash
+      
+      - name: Trigger autopkgtest and wait for completion
+        env:
+          AUTOPKGTEST_COOKIE: ${{ secrets.AUTOPKGTEST_COOKIE }}
+        run: |
+          # Add credentials via process substitution at execution time (not in logged CMD)
+          bash -c "${{ steps.build-cmd.outputs.command }} -credentials <(echo \"\$AUTOPKGTEST_COOKIE\")"
+        shell: bash
