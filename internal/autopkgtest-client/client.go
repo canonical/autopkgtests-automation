@@ -216,6 +216,18 @@ func (c *Client) GetTestStatus(uuid string) (*TestStatus, error) {
 	}
 	defer resp.Body.Close()
 
+	status := &TestStatus{
+		UUID:   uuid,
+		LogURL: resultURL,
+	}
+
+	// If we get a 404, the test results page doesn't exist yet
+	// This means the test is either queued or still running
+	if resp.StatusCode == 404 {
+		status.Status = "running"
+		return status, nil
+	}
+
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response: %w", err)
@@ -223,25 +235,39 @@ func (c *Client) GetTestStatus(uuid string) (*TestStatus, error) {
 
 	bodyStr := string(body)
 
-	status := &TestStatus{
-		UUID:   uuid,
-		LogURL: resultURL,
+	// Determine test status based on the Result field in the page
+	// The HTML structure is: <th>Result</th> followed by <td class="...">status_text</td>
+	// Also support the Markdown table format for backward compatibility: | Result | status |
+	resultHTMLRegex := regexp.MustCompile(`(?s)<th>Result</th>\s*<td[^>]*>([^<]+)</td>`)
+	resultMarkdownRegex := regexp.MustCompile(`(?i)\|\s*Result\s*\|[^|]*\|`)
+	
+	var resultValue string
+	
+	// Try HTML format first (the actual format used by the website)
+	if matches := resultHTMLRegex.FindStringSubmatch(bodyStr); len(matches) > 1 {
+		resultValue = strings.TrimSpace(matches[1])
+	} else if resultMatch := resultMarkdownRegex.FindString(bodyStr); resultMatch != "" {
+		// Fallback to Markdown table format (for backward compatibility with tests)
+		resultValue = resultMatch
 	}
 
-	// Determine test status based on the Result field in the page
-	// Use regex to match the Result row in the table to avoid false positives from navigation menu
-	resultRegex := regexp.MustCompile(`(?i)\|\s*Result\s*\|[^|]*\|`)
-	if resultMatch := resultRegex.FindString(bodyStr); resultMatch != "" {
-		// Check the actual result value - check for fail first to avoid substring issues
+	if resultValue != "" {
+		// Normalize the result match for comparison (lowercase, trim spaces)
+		resultLower := strings.ToLower(resultValue)
+
+		// Check the actual result value - check for tmpfail first to avoid substring issues with fail
 		// Status values can be: pass, fail, neutral, tmpfail
-		if strings.Contains(resultMatch, "tmpfail") || strings.Contains(resultMatch, "⚠ tmpfail") {
+		if strings.Contains(resultLower, "tmpfail") {
 			status.Status = "tmpfail"
-		} else if strings.Contains(resultMatch, "✖ fail") || strings.Contains(resultMatch, "fail") {
+		} else if strings.Contains(resultLower, "fail") {
 			status.Status = "fail"
-		} else if strings.Contains(resultMatch, "✔ pass") || strings.Contains(resultMatch, "pass") {
+		} else if strings.Contains(resultLower, "pass") {
 			status.Status = "pass"
-		} else if strings.Contains(resultMatch, "neutral") || strings.Contains(resultMatch, "😐neutral") {
+		} else if strings.Contains(resultLower, "neutral") {
 			status.Status = "neutral"
+		} else {
+			// Result row found but status not recognized - set as unknown
+			status.Status = "unknown"
 		}
 	} else {
 		// Fallback to checking page content for in-progress states
@@ -255,10 +281,16 @@ func (c *Client) GetTestStatus(uuid string) (*TestStatus, error) {
 	}
 
 	// Try to extract duration if test is complete
-	// Match both table format: | Duration | 1h 20m 25s |
-	// And plain text format: Duration: 1h 20m 25s
-	durationRegex := regexp.MustCompile(`(?:Duration[:\s]*\|?\s*)([^|\n]+)`)
-	if matches := durationRegex.FindStringSubmatch(bodyStr); len(matches) > 1 {
+	// HTML format: <th>Duration</th> followed by <td>duration_text</td>
+	// Markdown format: | Duration | 1h 20m 25s |
+	durationHTMLRegex := regexp.MustCompile(`(?s)<th>Duration</th>\s*<td[^>]*>([^<]+)</td>`)
+	durationMarkdownRegex := regexp.MustCompile(`(?:Duration[:\s]*\|?\s*)([^|\n]+)`)
+	
+	// Try HTML format first
+	if matches := durationHTMLRegex.FindStringSubmatch(bodyStr); len(matches) > 1 {
+		status.Duration = strings.TrimSpace(matches[1])
+	} else if matches := durationMarkdownRegex.FindStringSubmatch(bodyStr); len(matches) > 1 {
+		// Fallback to Markdown format
 		status.Duration = strings.TrimSpace(matches[1])
 	}
 
@@ -388,6 +420,17 @@ func (c *Client) FindRunningTest(packageName, release, arch string) (string, err
 // pollInterval: how often to check status (e.g., 30s)
 // timeout: maximum time to wait (e.g., 2h)
 func (c *Client) WaitForCompletion(pkg, uuid string, pollInterval, timeout time.Duration) (*TestStatus, error) {
+	// Check status immediately before starting the polling loop
+	status, err := c.GetTestStatus(uuid)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if test is already complete
+	if status.Status == "pass" || status.Status == "fail" || status.Status == "neutral" || status.Status == "tmpfail" {
+		return status, nil
+	}
+
 	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 

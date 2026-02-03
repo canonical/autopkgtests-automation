@@ -225,6 +225,34 @@ func TestGetTestStatus_Running(t *testing.T) {
 	}
 }
 
+func TestGetTestStatus_NotFound(t *testing.T) {
+	// Mock server that returns 404 (test not yet complete)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+		w.Write([]byte("404 Not Found"))
+	}))
+	defer server.Close()
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatalf("NewClient() failed: %v", err)
+	}
+	client.baseURL = server.URL
+
+	status, err := client.GetTestStatus("test-uuid-123")
+	if err != nil {
+		t.Fatalf("GetTestStatus() failed: %v", err)
+	}
+
+	if status.Status != "running" {
+		t.Errorf("Expected status 'running' for 404 response, got %s", status.Status)
+	}
+
+	if status.UUID != "test-uuid-123" {
+		t.Errorf("Expected UUID test-uuid-123, got %s", status.UUID)
+	}
+}
+
 func TestGetTestStatus_Pass(t *testing.T) {
 	// Mock server that returns passing status
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -327,6 +355,110 @@ func TestGetTestStatus_Neutral(t *testing.T) {
 
 	if status.Status != "neutral" {
 		t.Errorf("Expected status 'neutral', got %s", status.Status)
+	}
+}
+
+func TestGetTestStatus_RealHTMLFormat(t *testing.T) {
+	// Mock server that returns the actual HTML format from autopkgtest.ubuntu.com
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// This is the actual HTML format from https://autopkgtest.ubuntu.com/run/38f00154-bef1-4767-8aab-ddbecf5a8592
+		response := `<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title>Ubuntu Autopkgtest Results</title>
+  </head>
+  <body>
+    <table>
+      <tr>
+        <th>Version</th>
+        <td>25.09.0-3</td>
+      </tr>
+      <tr>
+        <th>Date</th>
+        <td>2026-02-02 15:37:43 UTC</td>
+      </tr>
+      <tr>
+        <th>Duration</th>
+        <td>1h 21m 00s</td>
+      </tr>
+      <tr>
+        <th>Result</th>
+        <td class="nowrap fail"
+            title="fail">fail</td>
+      </tr>
+      <tr>
+        <th>UUID</th>
+        <td>38f00154-bef1-4767-8aab-ddbecf5a8592</td>
+      </tr>
+    </table>
+  </body>
+</html>`
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(response))
+	}))
+	defer server.Close()
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatalf("NewClient() failed: %v", err)
+	}
+	client.baseURL = server.URL
+
+	status, err := client.GetTestStatus("38f00154-bef1-4767-8aab-ddbecf5a8592")
+	if err != nil {
+		t.Fatalf("GetTestStatus() failed: %v", err)
+	}
+
+	if status.Status != "fail" {
+		t.Errorf("Expected status 'fail', got %s", status.Status)
+	}
+
+	if status.Duration != "1h 21m 00s" {
+		t.Errorf("Expected duration '1h 21m 00s', got %s", status.Duration)
+	}
+}
+
+func TestGetTestStatus_RealHTMLFormat_Pass(t *testing.T) {
+	// Test with a passing test in real HTML format
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := `<!DOCTYPE html>
+<html>
+  <body>
+    <table>
+      <tr>
+        <th>Result</th>
+        <td class="nowrap pass"
+            title="pass">pass</td>
+      </tr>
+      <tr>
+        <th>Duration</th>
+        <td>15m 32s</td>
+      </tr>
+    </table>
+  </body>
+</html>`
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(response))
+	}))
+	defer server.Close()
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatalf("NewClient() failed: %v", err)
+	}
+	client.baseURL = server.URL
+
+	status, err := client.GetTestStatus("test-uuid")
+	if err != nil {
+		t.Fatalf("GetTestStatus() failed: %v", err)
+	}
+
+	if status.Status != "pass" {
+		t.Errorf("Expected status 'pass', got %s", status.Status)
+	}
+
+	if status.Duration != "15m 32s" {
+		t.Errorf("Expected duration '15m 32s', got %s", status.Duration)
 	}
 }
 
