@@ -61,7 +61,7 @@ jobs:
         id: build-cmd
         run: |
           # Build command WITHOUT credentials flag (to avoid exposure in logs)
-          CMD="./build/autopkgtest-cli trigger -package ${{ inputs.package }} -suite ${{ inputs.suite }} --wait --timeout 3h --poll-interval 5m"
+          CMD="./build/autopkgtest-cli trigger -package ${{ inputs.package }} -suite ${{ inputs.suite }} --wait --timeout 5h --poll-interval 5m"
           
           if [ -n "${{ inputs.version }}" ]; then
             CMD="$CMD -version ${{ inputs.version }}"
