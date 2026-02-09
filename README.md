@@ -120,22 +120,35 @@ autopkgtest-cli generate-trigger-link -package myapp -suite jammy -ppa myuser/te
 Trigger autopkgtests automatically with authentication:
 
 ```bash
-# Basic trigger (requires cookies)
+# Basic trigger (using environment variable - recommended for CI/CD)
+export AUTOPKGTEST_COOKIE="your-session-cookie"
+autopkgtest-cli trigger -package ovn -suite noble
+
+# Or use a credentials file
 autopkgtest-cli trigger -package ovn -suite noble -credentials ~/.autopkgtest-cookies
 
+# Or read from stdin
+echo "your-session-cookie" | autopkgtest-cli trigger -package ovn -suite noble -credentials -
+
 # Trigger for specific architectures
-autopkgtest-cli trigger -package ovn -suite noble -arch amd64,arm64 -credentials ~/.autopkgtest-cookies
+autopkgtest-cli trigger -package ovn -suite noble -arch amd64,arm64
 
 # Trigger and wait for completion
-autopkgtest-cli trigger -package ovn -suite noble --wait --timeout 1h -credentials ~/.autopkgtest-cookies
+autopkgtest-cli trigger -package ovn -suite noble --wait --timeout 1h
 
 # Test against a PPA
-autopkgtest-cli trigger -package myapp -suite jammy -ppa myuser/testing-ppa -credentials ~/.autopkgtest-cookies
+autopkgtest-cli trigger -package myapp -suite jammy -ppa myuser/testing-ppa
 ```
 
 **Authentication Setup:**
 
-The `trigger` command requires Launchpad authentication.
+The `trigger` command requires Launchpad authentication. The session cookie can be provided in three ways (checked in order):
+
+1. **File**: Use `-credentials <path>` to read from a file
+2. **Stdin**: Use `-credentials -` to read from standard input
+3. **Environment Variable**: Set `AUTOPKGTEST_COOKIE` environment variable (recommended for CI/CD)
+
+The cookie will never be displayed in command output, making it safe for use in CI/CD pipelines.
 
 **Monitoring Options:**
 - `--wait`: Wait for test completion before exiting (streams logs in real-time)
@@ -199,7 +212,7 @@ Flags:
   -trigger string         Custom trigger string (optional, overrides package/version)
   -ppa string             PPA to test against (optional, format: user/ppa-name)
   -all-proposed           Install all packages from proposed pocket (optional)
-  -credentials string     Path to cookie file with Launchpad session (required for auth)
+  -credentials string     Path to cookie file, "-" for stdin, or set AUTOPKGTEST_COOKIE env var
   -wait                   Wait for test completion
   -timeout duration       Maximum time to wait for completion (default: 2h)
   -poll-interval duration How often to check test status (default: 30s)

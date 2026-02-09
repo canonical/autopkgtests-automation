@@ -60,7 +60,7 @@ jobs:
       - name: Build trigger command
         id: build-cmd
         run: |
-          # Build command WITHOUT credentials flag (to avoid exposure in logs)
+          # Build the full command with all flags
           CMD="./build/autopkgtest-cli trigger -package ${{ inputs.package }} -suite ${{ inputs.suite }} --wait --timeout 5h --poll-interval 5m"
           
           if [ -n "${{ inputs.version }}" ]; then
@@ -90,6 +90,6 @@ jobs:
         env:
           AUTOPKGTEST_COOKIE: ${{ secrets.AUTOPKGTEST_COOKIE }}
         run: |
-          # Add credentials via process substitution at execution time (not in logged CMD)
-          bash -c "${{ steps.build-cmd.outputs.command }} -credentials <(echo \"\$AUTOPKGTEST_COOKIE\")"
+          # Cookie will be read automatically from AUTOPKGTEST_COOKIE environment variable
+          ${{ steps.build-cmd.outputs.command }}
         shell: bash

@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"strings"
@@ -183,7 +184,7 @@ func printUsage() {
 		"\t-trigger string      Custom trigger (optional, comma-separated for multiple)\n" +
 		"\t-ppa string          PPA to test (optional, e.g., user/ppa-name)\n" +
 		"\t-all-proposed        Use all packages from proposed pocket\n" +
-		"\t-credentials string  Path to cookie file with Launchpad session (optional)\n" +
+		"\t-credentials string  Path to cookie file (use \"-\" for stdin, or set AUTOPKGTEST_COOKIE env var)\n" +
 		"\t-wait                Wait for test completion\n" +
 		"\t-timeout duration    Maximum time to wait (default: 2h)\n" +
 		"\t-poll-interval duration  How often to check status (default: 30s)\n\n" +
@@ -350,15 +351,14 @@ func handleTrigger(packageName, version, suite string, triggers []string, ppa st
 	// Create autopkgtest client
 	var clientOpts []autopkgtestclient.ClientOption
 
-	if credentials != "" {
-		cookies, err := loadCookiesFromFile(credentials)
-		if err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: Failed to load cookies from %s: %v\n", credentials, err)
-			fmt.Fprintf(os.Stderr, "Will attempt to trigger without authentication (may fail)\n\n")
-		} else {
-			fmt.Printf("Loaded %d cookie(s) from %s\n\n", len(cookies), credentials)
-			clientOpts = append(clientOpts, autopkgtestclient.WithCookies(cookies))
-		}
+	// Try to load cookies from multiple sources (in priority order)
+	cookies, source, err := loadCookies(credentials)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: Failed to load cookies: %v\n", err)
+		fmt.Fprintf(os.Stderr, "Will attempt to trigger without authentication (may fail)\n\n")
+	} else if len(cookies) > 0 {
+		fmt.Printf("Loaded session cookie from %s\n\n", source)
+		clientOpts = append(clientOpts, autopkgtestclient.WithCookies(cookies))
 	}
 
 	client, err := autopkgtestclient.NewClient(clientOpts...)
@@ -534,17 +534,44 @@ func handleTrigger(packageName, version, suite string, triggers []string, ppa st
 	}
 }
 
-// loadCookiesFromFile loads cookie value from a plain text file
-func loadCookiesFromFile(filepath string) ([]*http.Cookie, error) {
-	data, err := os.ReadFile(filepath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
+// loadCookies loads cookie from multiple sources in priority order:
+// 1. File specified via -credentials flag (supports "-" for stdin)
+// 2. AUTOPKGTEST_COOKIE environment variable
+// Returns cookies, source description, and error
+func loadCookies(credentialsPath string) ([]*http.Cookie, string, error) {
+	var cookieValue string
+	var source string
+
+	// Priority 1: -credentials flag (file path or "-" for stdin)
+	if credentialsPath != "" {
+		if credentialsPath == "-" {
+			// Read from stdin
+			data, err := io.ReadAll(os.Stdin)
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to read from stdin: %w", err)
+			}
+			cookieValue = strings.TrimSpace(string(data))
+			source = "stdin"
+		} else {
+			// Read from file
+			data, err := os.ReadFile(credentialsPath)
+			if err != nil {
+				return nil, "", fmt.Errorf("failed to read file %s: %w", credentialsPath, err)
+			}
+			cookieValue = strings.TrimSpace(string(data))
+			source = fmt.Sprintf("file: %s", credentialsPath)
+		}
+	} else {
+		// Priority 2: Environment variable
+		envCookie := os.Getenv("AUTOPKGTEST_COOKIE")
+		if envCookie != "" {
+			cookieValue = strings.TrimSpace(envCookie)
+			source = "AUTOPKGTEST_COOKIE environment variable"
+		}
 	}
 
-	// Trim whitespace from cookie value
-	cookieValue := strings.TrimSpace(string(data))
 	if cookieValue == "" {
-		return nil, fmt.Errorf("cookie file is empty")
+		return nil, "", fmt.Errorf("no cookie found (checked: -credentials flag, AUTOPKGTEST_COOKIE env var)")
 	}
 
 	// Create session cookie
@@ -557,7 +584,7 @@ func loadCookiesFromFile(filepath string) ([]*http.Cookie, error) {
 		HttpOnly: true,
 	}
 
-	return []*http.Cookie{cookie}, nil
+	return []*http.Cookie{cookie}, source, nil
 }
 
 // extractArchFromURL extracts architecture from trigger URL
