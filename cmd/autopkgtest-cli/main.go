@@ -424,11 +424,16 @@ func handleTrigger(packageName, version, suite string, triggers []string, ppa st
 			}
 		} else {
 			fmt.Printf("✓ Test triggered successfully!\n")
-			fmt.Printf("\tUUID:     %s\n", result.UUID)
+			if result.UUID != "" {
+				fmt.Printf("\tUUID:     %s\n", result.UUID)
+			}
 			fmt.Printf("\tPackage:  %s\n", result.Package)
 			fmt.Printf("\tRelease:  %s\n", result.Release)
 			fmt.Printf("\tArch:     %s\n", result.Arch)
 			fmt.Printf("\tResults:  %s\n", result.ResultURL)
+			if result.UUID == "" {
+				fmt.Printf("\tNote:     PPA test submitted (no UUID available)\n")
+			}
 			fmt.Println()
 		}
 
@@ -442,10 +447,35 @@ func handleTrigger(packageName, version, suite string, triggers []string, ppa st
 
 	// Wait for completion if requested
 	if wait {
+		// Filter out PPA tests (those without UUIDs) since we can't track them individually
+		var trackableResults []*autopkgtestclient.TriggerResult
+		var ppaResults []*autopkgtestclient.TriggerResult
+
+		for _, result := range results {
+			if result.UUID != "" {
+				trackableResults = append(trackableResults, result)
+			} else {
+				ppaResults = append(ppaResults, result)
+			}
+		}
+
+		if len(ppaResults) > 0 {
+			fmt.Println("Note: PPA tests cannot be tracked automatically. Please check results manually at:")
+			for _, result := range ppaResults {
+				fmt.Printf("  • %s (%s/%s) - %s\n", result.Package, result.Release, result.Arch, result.ResultURL)
+			}
+			fmt.Println()
+		}
+
+		if len(trackableResults) == 0 {
+			fmt.Println("No trackable tests to wait for.")
+			return
+		}
+
 		fmt.Printf("Waiting for test completion (timeout: %v, poll interval: %v)...\n\n", timeout, pollInterval)
 
 		hasFailure := false
-		for _, result := range results {
+		for _, result := range trackableResults {
 			fmt.Printf("Monitoring: %s [%s/%s]\n", result.Package, result.Release, result.Arch)
 			fmt.Printf("UUID: %s\n", result.UUID)
 			// Print the packages page URL where live logs can be viewed

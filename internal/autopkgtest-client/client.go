@@ -171,8 +171,34 @@ func (c *Client) TriggerTest(triggerURL string) (*TriggerResult, error) {
 			result.Triggers = matches[1]
 		}
 
+		// Extract PPAs (for PPA test requests)
+		// Format: <dt>ppas</dt>\n<dd>['username/ppa-name']</dd>
+		ppaRegex := regexp.MustCompile(`(?:ppas\s*\n\s*|<dt>ppas</dt>\s*\n\s*<dd>)\['([^']+)'\]`)
+		var ppaStr string
+		if matches := ppaRegex.FindStringSubmatch(bodyStr); len(matches) > 1 {
+			ppaStr = matches[1]
+		}
+
+		// Handle PPA-based test requests (no UUID returned)
+		if result.UUID == "" && ppaStr != "" {
+			// PPA format is "username/ppa-name"
+			ppaParts := strings.SplitN(ppaStr, "/", 2)
+			if len(ppaParts) == 2 {
+				username := ppaParts[0]
+				ppaName := ppaParts[1]
+
+				// Construct the result URLs for PPA tests
+				result.ResultURL = fmt.Sprintf("%s/user/%s/ppa/%s", c.baseURL, username, ppaName)
+				result.HistoryURL = result.ResultURL
+
+				// UUID not available for PPA tests, leave it empty
+				return result, nil
+			}
+			return nil, fmt.Errorf("test submission response indicates PPA test but PPA format is invalid: %s", ppaStr)
+		}
+
 		if result.UUID == "" {
-			return nil, fmt.Errorf("test submission response parsed but UUID not found")
+			return nil, fmt.Errorf("test submission response parsed but UUID not found and no PPA information available")
 		}
 
 		return result, nil
@@ -240,9 +266,9 @@ func (c *Client) GetTestStatus(uuid string) (*TestStatus, error) {
 	// Also support the Markdown table format for backward compatibility: | Result | status |
 	resultHTMLRegex := regexp.MustCompile(`(?s)<th>Result</th>\s*<td[^>]*>([^<]+)</td>`)
 	resultMarkdownRegex := regexp.MustCompile(`(?i)\|\s*Result\s*\|[^|]*\|`)
-	
+
 	var resultValue string
-	
+
 	// Try HTML format first (the actual format used by the website)
 	if matches := resultHTMLRegex.FindStringSubmatch(bodyStr); len(matches) > 1 {
 		resultValue = strings.TrimSpace(matches[1])
@@ -285,7 +311,7 @@ func (c *Client) GetTestStatus(uuid string) (*TestStatus, error) {
 	// Markdown format: | Duration | 1h 20m 25s |
 	durationHTMLRegex := regexp.MustCompile(`(?s)<th>Duration</th>\s*<td[^>]*>([^<]+)</td>`)
 	durationMarkdownRegex := regexp.MustCompile(`(?:Duration[:\s]*\|?\s*)([^|\n]+)`)
-	
+
 	// Try HTML format first
 	if matches := durationHTMLRegex.FindStringSubmatch(bodyStr); len(matches) > 1 {
 		status.Duration = strings.TrimSpace(matches[1])

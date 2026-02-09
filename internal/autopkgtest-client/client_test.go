@@ -162,7 +162,7 @@ func TestTriggerTest_InvalidRequest_WithLogout(t *testing.T) {
 </head>
 <body>
 
-<p><a href="/logout">Logout matperin</a></p>
+<p><a href="/logout">Logout username</a></p>
 <p>You submitted an invalid request: openssl/3.5.4-1ubuntu1 is not published in noble</p>
 
 </body>`
@@ -193,6 +193,85 @@ func TestTriggerTest_InvalidRequest_WithLogout(t *testing.T) {
 	// Should contain the specific error message
 	if !strings.Contains(err.Error(), "is not published in noble") {
 		t.Errorf("Expected error message to contain 'is not published in noble', got: %v", err)
+	}
+}
+
+func TestTriggerTest_SuccessPPA(t *testing.T) {
+	// Mock server that returns successful PPA test submission
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		response := `<head>
+<meta charset="utf-8">
+<title>Autopkgtest Test Request</title>
+</head>
+<body>
+
+<p><a href="/logout">Logout username</a></p>
+
+<p>Test request submitted.</p>
+<dl>
+<dt>arch</dt>
+<dd>amd64</dd>
+<dt>package</dt>
+<dd>openvswitch</dd>
+<dt>ppas</dt>
+<dd>['username/ppa']</dd>
+<dt>release</dt>
+<dd>resolute</dd>
+<dt>requester</dt>
+<dd>username</dd>
+<dt>triggers</dt>
+<dd>['openvswitch/3.7.0~git20260204.75ba627-0ubuntu1']</dd>
+
+</dl>
+
+
+
+</body>`
+		w.WriteHeader(http.StatusOK)
+		w.Write([]byte(response))
+	}))
+	defer server.Close()
+
+	client, err := NewClient()
+	if err != nil {
+		t.Fatalf("NewClient() failed: %v", err)
+	}
+	client.baseURL = server.URL
+
+	result, err := client.TriggerTest(server.URL)
+	if err != nil {
+		t.Fatalf("TriggerTest() failed: %v", err)
+	}
+
+	// UUID should be empty for PPA tests
+	if result.UUID != "" {
+		t.Errorf("Expected empty UUID for PPA test, got %s", result.UUID)
+	}
+
+	if result.Package != "openvswitch" {
+		t.Errorf("Expected package openvswitch, got %s", result.Package)
+	}
+
+	if result.Release != "resolute" {
+		t.Errorf("Expected release resolute, got %s", result.Release)
+	}
+
+	if result.Arch != "amd64" {
+		t.Errorf("Expected arch amd64, got %s", result.Arch)
+	}
+
+	if result.Requester != "username" {
+		t.Errorf("Expected requester username, got %s", result.Requester)
+	}
+
+	// For PPA tests, ResultURL should be constructed from PPA info
+	expectedURL := server.URL + "/user/username/ppa/ppa"
+	if result.ResultURL != expectedURL {
+		t.Errorf("Expected ResultURL %s, got %s", expectedURL, result.ResultURL)
+	}
+
+	if result.HistoryURL != expectedURL {
+		t.Errorf("Expected HistoryURL %s, got %s", expectedURL, result.HistoryURL)
 	}
 }
 
