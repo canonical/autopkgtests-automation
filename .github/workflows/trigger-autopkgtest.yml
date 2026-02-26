@@ -11,7 +11,7 @@ on:
         description: 'Ubuntu release (e.g., noble, jammy, mantic)'
         required: true
         type: string
-        default: 'noble'
+        default: 'resolute'
       version:
         description: 'Package version (optional)'
         required: false
