@@ -88,15 +88,26 @@ func (s *Scraper) ParseHTML(htmlContent string, packageName string, filter *Filt
 		return nil, fmt.Errorf("failed to parse HTML: %w", err)
 	}
 
-	// Parse the HTML to extract test results from the matrix table
-	s.parseMatrixTable(doc, results)
+	// Find the results table and parse it
+	table := findResultsTable(doc)
+	if table == nil {
+		return results, nil
+	}
+
+	// Extract the header (release names) and data rows from the table
+	releases, dataRows := extractTableStructure(table)
+
+	// Build test results from each data row
+	for _, row := range dataRows {
+		s.parseDataRow(row, releases, results)
+	}
 
 	// Apply filters if provided
 	if filter != nil {
-		results.Tests = s.applyFilter(results.Tests, filter)
+		results.Tests = applyFilter(results.Tests, filter)
 	}
 
-	// Filter errors (tests with non-passing status)
+	// Collect errors (tests with non-passing status)
 	for _, test := range results.Tests {
 		if !isPassingStatus(test.Status) {
 			results.Errors = append(results.Errors, test)
@@ -107,27 +118,34 @@ func (s *Scraper) ParseHTML(htmlContent string, packageName string, filter *Filt
 }
 
 // applyFilter filters test results based on the provided criteria
-func (s *Scraper) applyFilter(tests []TestResult, filter *Filter) []TestResult {
+func applyFilter(tests []TestResult, filter *Filter) []TestResult {
 	if filter == nil {
 		return tests
 	}
 
 	var filtered []TestResult
 	for _, test := range tests {
-		// Filter by release if specified
 		if filter.Release != "" && !strings.EqualFold(test.Release, filter.Release) {
 			continue
 		}
-
-		// Filter by architecture if specified
-		if filter.Architecture != "" && !strings.EqualFold(test.Architecture, filter.Architecture) {
+		if filter.Architecture != "" && !matchesArchitecture(test.Architecture, filter.Architecture) {
 			continue
 		}
-
 		filtered = append(filtered, test)
 	}
 
 	return filtered
+}
+
+// matchesArchitecture checks whether arch matches the filter, which may be a
+// single architecture ("amd64") or a comma-separated list ("amd64,arm64").
+func matchesArchitecture(arch, filter string) bool {
+	for _, f := range strings.Split(filter, ",") {
+		if strings.EqualFold(strings.TrimSpace(f), arch) {
+			return true
+		}
+	}
+	return false
 }
 
 // isPassingStatus checks if a status indicates a passing test
@@ -138,208 +156,188 @@ func isPassingStatus(status string) bool {
 		strings.Contains(normalizedStatus, "pass")
 }
 
-// parseMatrixTable parses the main results matrix table
-// The table has releases as columns (focal, jammy, noble, etc.) and architectures as rows
-func (s *Scraper) parseMatrixTable(n *html.Node, results *PackageResults) {
-	table := s.findMatrixTable(n)
-	if table == nil {
-		return
-	}
+// ---------------------------------------------------------------------------
+// Table discovery
+// ---------------------------------------------------------------------------
 
-	var releases []string
-	var rows []*html.Node
-	var foundHeader bool
-
-	// The table structure has tbody as a direct child, or tr elements as direct children
-	for child := table.FirstChild; child != nil; child = child.NextSibling {
-		if child.Type != html.ElementNode {
-			continue
-		}
-
-		switch child.Data {
-		case "tbody":
-			releases, rows = s.ProcessTbody(child, releases, &foundHeader)
-		case "thead":
-			releases = s.ProcessThead(child)
-			foundHeader = true
-		case "tr":
-			releases, rows = s.ProcessTr(child, releases, rows, &foundHeader)
-		}
-	}
-
-	// Parse each row to extract architecture and statuses
-	for _, row := range rows {
-		s.parseMatrixRow(row, releases, results)
-	}
-}
-
-// ProcessTbody processes tbody element and extracts header and data rows
-func (s *Scraper) ProcessTbody(tbody *html.Node, releases []string, foundHeader *bool) ([]string, []*html.Node) {
-	var rows []*html.Node
-
-	for tr := tbody.FirstChild; tr != nil; tr = tr.NextSibling {
-		if tr.Type == html.ElementNode && tr.Data == "tr" {
-			// Check if this is the header row
-			if !*foundHeader && s.isHeaderRow(tr) {
-				releases = s.extractReleaseHeaders(tr)
-				*foundHeader = true
-			} else if *foundHeader {
-				// This is a data row
-				rows = append(rows, tr)
-			}
-		}
-	}
-
-	return releases, rows
-}
-
-// ProcessThead processes thead element and extracts release names
-func (s *Scraper) ProcessThead(thead *html.Node) []string {
-	for tr := thead.FirstChild; tr != nil; tr = tr.NextSibling {
-		if tr.Type == html.ElementNode && tr.Data == "tr" {
-			return s.extractReleaseHeaders(tr)
-		}
-	}
-	return []string{}
-}
-
-// ProcessTr processes a direct tr element as either header or data row
-func (s *Scraper) ProcessTr(tr *html.Node, releases []string, rows []*html.Node, foundHeader *bool) ([]string, []*html.Node) {
-	if !*foundHeader && s.isHeaderRow(tr) {
-		releases = s.extractReleaseHeaders(tr)
-		*foundHeader = true
-	} else if *foundHeader {
-		rows = append(rows, tr)
-	}
-	return releases, rows
-}
-
-// findMatrixTable finds the main results table in the document
-func (s *Scraper) findMatrixTable(n *html.Node) *html.Node {
+// findResultsTable locates the autopkgtest results table in the parsed HTML
+// document. It looks for a <table> with a CSS class containing "table".
+func findResultsTable(n *html.Node) *html.Node {
 	if n.Type == html.ElementNode && n.Data == "table" {
-		// Check if this table has the "table" class and expected structure
-		hasTableClass := false
-		for _, attr := range n.Attr {
-			if attr.Key == "class" && strings.Contains(attr.Val, "table") {
-				hasTableClass = true
-				break
-			}
-		}
-
-		if hasTableClass {
-			// Verify it has the expected content (release names and architectures)
-			tableText := getNodeText(n)
-			hasReleases := strings.Contains(tableText, "focal") || strings.Contains(tableText, "jammy") ||
-				strings.Contains(tableText, "noble") || strings.Contains(tableText, "questing")
-			hasArchs := strings.Contains(tableText, "amd64") || strings.Contains(tableText, "arm64")
-
-			if hasReleases && hasArchs {
-				return n
-			}
+		if hasClass(n, "table") {
+			return n
 		}
 	}
 
 	for child := n.FirstChild; child != nil; child = child.NextSibling {
-		if result := s.findMatrixTable(child); result != nil {
+		if result := findResultsTable(child); result != nil {
 			return result
 		}
 	}
-
 	return nil
 }
 
-// isHeaderRow checks if a row is a header row
-func (s *Scraper) isHeaderRow(tr *html.Node) bool {
-	for child := tr.FirstChild; child != nil; child = child.NextSibling {
-		if child.Type == html.ElementNode && child.Data == "th" {
+// hasClass checks whether an HTML node has a given CSS class.
+func hasClass(n *html.Node, class string) bool {
+	for _, attr := range n.Attr {
+		if attr.Key == "class" && strings.Contains(attr.Val, class) {
 			return true
 		}
 	}
 	return false
 }
 
-// extractReleaseHeaders extracts release names from the header row
-func (s *Scraper) extractReleaseHeaders(headerNode *html.Node) []string {
-	var releases []string
+// ---------------------------------------------------------------------------
+// Table structure extraction
+// ---------------------------------------------------------------------------
 
-	// Find the tr element if we're in thead
-	var headerRow *html.Node
-	if headerNode.Data == "thead" {
-		for child := headerNode.FirstChild; child != nil; child = child.NextSibling {
+// extractTableStructure walks the table node and returns the list of release
+// names (column headers, excluding the leading architecture-label column) and
+// the set of data <tr> nodes (one per architecture).
+func extractTableStructure(table *html.Node) (releases []string, dataRows []*html.Node) {
+	var headerFound bool
+
+	// collectRows is called for each container that may hold <tr> elements
+	// (the table itself, a <thead>, or a <tbody>).
+	var collectRows func(container *html.Node)
+	collectRows = func(container *html.Node) {
+		for child := container.FirstChild; child != nil; child = child.NextSibling {
+			if child.Type != html.ElementNode {
+				continue
+			}
+			switch child.Data {
+			case "thead":
+				releases = extractReleaseNames(child)
+				headerFound = true
+			case "tbody":
+				collectRows(child) // recurse into tbody
+			case "tr":
+				if !headerFound && isHeaderRow(child) {
+					releases = extractReleaseNames(child)
+					headerFound = true
+				} else if headerFound {
+					dataRows = append(dataRows, child)
+				}
+			}
+		}
+	}
+
+	collectRows(table)
+	return releases, dataRows
+}
+
+// isHeaderRow returns true when every cell in the row is a <th>.
+// Data rows in the autopkgtest table use <th> only for the first cell
+// (architecture name) and <td> for the rest, so a row that is entirely
+// <th> elements is the header.
+func isHeaderRow(tr *html.Node) bool {
+	hasTH := false
+	for child := tr.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type != html.ElementNode {
+			continue
+		}
+		if child.Data == "td" {
+			return false // data rows have <td> cells
+		}
+		if child.Data == "th" {
+			hasTH = true
+		}
+	}
+	return hasTH
+}
+
+// extractReleaseNames returns the non-empty column headers from a header row
+// or <thead>. The first cell in the header row is the empty corner cell above
+// the architecture column and is intentionally skipped so that the returned
+// slice aligns 1:1 with the data cells that follow the architecture cell in
+// each data row.
+func extractReleaseNames(node *html.Node) []string {
+	// If we received a <thead>, drill down to its <tr>.
+	tr := node
+	if node.Data == "thead" {
+		for child := node.FirstChild; child != nil; child = child.NextSibling {
 			if child.Type == html.ElementNode && child.Data == "tr" {
-				headerRow = child
+				tr = child
 				break
 			}
 		}
-	} else if headerNode.Data == "tr" {
-		headerRow = headerNode
 	}
 
-	if headerRow == nil {
-		return releases
-	}
-
-	// Extract text from th or td elements
-	for cell := headerRow.FirstChild; cell != nil; cell = cell.NextSibling {
+	var releases []string
+	first := true
+	for cell := tr.FirstChild; cell != nil; cell = cell.NextSibling {
 		if cell.Type == html.ElementNode && (cell.Data == "th" || cell.Data == "td") {
+			if first {
+				// Skip the leading corner cell (empty <th> above the arch column).
+				first = false
+				continue
+			}
 			text := strings.TrimSpace(getNodeText(cell))
-			releases = append(releases, text)
+			if text != "" {
+				releases = append(releases, text)
+			}
 		}
 	}
-
 	return releases
 }
 
-// parseMatrixRow parses a single row of the matrix table
-func (s *Scraper) parseMatrixRow(tr *html.Node, releases []string, results *PackageResults) {
-	var cells []*html.Node
-	var architecture string
+// ---------------------------------------------------------------------------
+// Row parsing
+// ---------------------------------------------------------------------------
 
-	// Collect all cells
-	cellIndex := 0
-	for td := tr.FirstChild; td != nil; td = td.NextSibling {
-		if td.Type == html.ElementNode && (td.Data == "td" || td.Data == "th") {
-			if cellIndex == 0 {
-				// First cell is the architecture
-				architecture = strings.TrimSpace(getNodeText(td))
-			} else {
-				cells = append(cells, td)
-			}
-			cellIndex++
+// parseDataRow extracts the architecture name and per-release statuses from a
+// single data row and appends the results to results.Tests.
+//
+// The expected row layout is:
+//
+//	<tr>
+//	  <th>amd64</th>            ← architecture
+//	  <td class="pass">…</td>  ← releases[0]
+//	  <td class="fail">…</td>  ← releases[1]
+//	  …
+//	</tr>
+func (s *Scraper) parseDataRow(tr *html.Node, releases []string, results *PackageResults) {
+	var architecture string
+	var dataCells []*html.Node
+
+	first := true
+	for child := tr.FirstChild; child != nil; child = child.NextSibling {
+		if child.Type != html.ElementNode {
+			continue
 		}
+		if child.Data != "td" && child.Data != "th" {
+			continue
+		}
+		if first {
+			architecture = strings.TrimSpace(getNodeText(child))
+			first = false
+			continue
+		}
+		dataCells = append(dataCells, child)
 	}
 
-	// Skip if we don't have an architecture
-	if len(strings.TrimSpace(architecture)) == 0 || len(cells) == 0 {
+	if architecture == "" || len(dataCells) == 0 {
 		return
 	}
 
-	// Parse each cell (one per release)
-	for i, cell := range cells {
+	for i, cell := range dataCells {
 		if i >= len(releases) {
 			break
 		}
 
-		release := releases[i]
-		if len(strings.TrimSpace(release)) == 0 {
-			continue
-		}
-
-		status := s.extractStatusFromCell(cell)
-		if len(strings.TrimSpace(status)) == 0 {
+		status := extractStatusFromCell(cell)
+		if status == "" {
 			continue
 		}
 
 		test := TestResult{
 			Package:      results.Package,
 			Architecture: architecture,
-			Release:      release,
+			Release:      releases[i],
 			Status:       status,
 		}
 
-		// Try to extract link to detailed results
-		if link := s.extractLink(cell); len(link) > 0 {
-			// Make the URL absolute
+		if link := extractLink(cell); link != "" {
 			if !strings.HasPrefix(link, "http") {
 				test.LogURL = fmt.Sprintf("%s/%s", s.BaseURL, link)
 			} else {
@@ -351,23 +349,24 @@ func (s *Scraper) parseMatrixRow(tr *html.Node, releases []string, results *Pack
 	}
 }
 
-// extractStatusFromCell extracts the status text and emoji from a table cell
-func (s *Scraper) extractStatusFromCell(cell *html.Node) string {
-	text := strings.TrimSpace(getNodeText(cell))
+// ---------------------------------------------------------------------------
+// Cell helpers
+// ---------------------------------------------------------------------------
 
-	// Normalize the status text
+// extractStatusFromCell returns the normalized status text from a table cell.
+func extractStatusFromCell(cell *html.Node) string {
+	text := strings.TrimSpace(getNodeText(cell))
 	text = strings.ReplaceAll(text, "\n", " ")
 	text = strings.ReplaceAll(text, "\t", " ")
 
-	// Handle multiple spaces
 	spaceRegex := regexp.MustCompile(`\s+`)
 	text = spaceRegex.ReplaceAllString(text, " ")
 
 	return strings.TrimSpace(text)
 }
 
-// extractLink extracts href from anchor tags
-func (s *Scraper) extractLink(n *html.Node) string {
+// extractLink returns the href value of the first <a> child of node.
+func extractLink(n *html.Node) string {
 	for c := n.FirstChild; c != nil; c = c.NextSibling {
 		if c.Type == html.ElementNode && c.Data == "a" {
 			for _, attr := range c.Attr {
@@ -380,7 +379,7 @@ func (s *Scraper) extractLink(n *html.Node) string {
 	return ""
 }
 
-// getNodeText extracts all text content from a node
+// getNodeText extracts all text content from a node and its children.
 func getNodeText(n *html.Node) string {
 	var text strings.Builder
 
@@ -397,6 +396,10 @@ func getNodeText(n *html.Node) string {
 	extract(n)
 	return text.String()
 }
+
+// ---------------------------------------------------------------------------
+// Reporting
+// ---------------------------------------------------------------------------
 
 // ReportErrors formats and returns a string with all errors found
 func (r *PackageResults) ReportErrors() string {

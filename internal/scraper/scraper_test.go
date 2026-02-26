@@ -13,9 +13,8 @@ const mockHTMLWithErrors = `
 <html>
 <head><title>autopkgtest results for ovn</title></head>
 <body>
-<h1>Package: ovn</h1>
+<h2>ovn</h2>
 <table class="table" style="width: auto">
-  <tbody>
   <tr>
     <th></th>
     <th>focal</th><th>jammy</th><th>noble</th>
@@ -44,7 +43,6 @@ const mockHTMLWithErrors = `
       <a href="ovn/noble/arm64">pass</a>
     </td>
   </tr>
-  </tbody>
 </table>
 </body>
 </html>
@@ -55,9 +53,8 @@ const mockHTMLWithoutErrors = `
 <html>
 <head><title>autopkgtest results for test-pkg</title></head>
 <body>
-<h1>Package: test-pkg</h1>
+<h2>test-pkg</h2>
 <table class="table">
-  <tbody>
   <tr>
     <th></th>
     <th>focal</th><th>jammy</th>
@@ -71,6 +68,60 @@ const mockHTMLWithoutErrors = `
     <th>arm64</th>
     <td class="pass"><a href="test-pkg/focal/arm64">pass</a></td>
     <td class="pass"><a href="test-pkg/jammy/arm64">pass</a></td>
+  </tr>
+</table>
+</body>
+</html>
+`
+
+const mockHTMLWithResolute = `
+<!DOCTYPE html>
+<html>
+<head><title>autopkgtest results for openvswitch</title></head>
+<body>
+<h2>openvswitch</h2>
+<table class="table" style="width: auto">
+  <tr>
+    <th></th>
+    <th>focal</th><th>jammy</th><th>noble</th><th>questing</th><th>resolute</th>
+  </tr>
+  <tr>
+    <th>amd64</th>
+    <td class="pass"><a href="openvswitch/focal/amd64">pass</a></td>
+    <td class="pass"><a href="openvswitch/jammy/amd64">pass</a></td>
+    <td class="tmpfail"><a href="openvswitch/noble/amd64">tmpfail</a></td>
+    <td class="fail"><a href="openvswitch/questing/amd64">fail</a></td>
+    <td class="pass"><a href="openvswitch/resolute/amd64">pass</a></td>
+  </tr>
+  <tr>
+    <th>arm64</th>
+    <td class="pass"><a href="openvswitch/focal/arm64">pass</a></td>
+    <td class="pass"><a href="openvswitch/jammy/arm64">pass</a></td>
+    <td class="tmpfail"><a href="openvswitch/noble/arm64">tmpfail</a></td>
+    <td class="tmpfail"><a href="openvswitch/questing/arm64">tmpfail</a></td>
+    <td class="pass"><a href="openvswitch/resolute/arm64">pass</a></td>
+  </tr>
+</table>
+</body>
+</html>
+`
+
+const mockHTMLWithTbody = `
+<!DOCTYPE html>
+<html>
+<head><title>autopkgtest results for pkg-tbody</title></head>
+<body>
+<h2>pkg-tbody</h2>
+<table class="table">
+  <tbody>
+  <tr>
+    <th></th>
+    <th>jammy</th><th>noble</th>
+  </tr>
+  <tr>
+    <th>amd64</th>
+    <td class="pass"><a href="pkg-tbody/jammy/amd64">pass</a></td>
+    <td class="fail"><a href="pkg-tbody/noble/amd64">fail</a></td>
   </tr>
   </tbody>
 </table>
@@ -116,21 +167,37 @@ func TestParseHTMLWithErrors(t *testing.T) {
 		t.Errorf("Expected package name 'ovn', got '%s'", results.Package)
 	}
 
-	// We should have tests for amd64 x 3 releases + arm64 x 3 releases = 6 (but may be fewer if some are missing)
-	if len(results.Tests) < 4 {
-		t.Errorf("Expected at least 4 test results, got %d", len(results.Tests))
+	// 2 architectures × 3 releases = 6 tests
+	if len(results.Tests) != 6 {
+		t.Errorf("Expected 6 test results, got %d", len(results.Tests))
 	}
 
-	// Should have 2 errors (1 fail + 1 regression)
-	if len(results.Errors) < 2 {
-		t.Errorf("Expected at least 2 errors (FAIL and REGRESSION), got %d", len(results.Errors))
+	// Should have exactly 2 errors: noble/amd64 (fail) and jammy/arm64 (regression)
+	if len(results.Errors) != 2 {
+		t.Errorf("Expected 2 errors, got %d", len(results.Errors))
 	}
 
-	// Check that PASS tests are not in errors
-	for _, err := range results.Errors {
-		status := strings.ToLower(err.Status)
-		if strings.Contains(status, "pass") {
-			t.Error("PASS status should not be in errors list")
+	// Verify specific release assignments
+	releaseArchStatus := map[string]string{}
+	for _, test := range results.Tests {
+		key := test.Release + "/" + test.Architecture
+		releaseArchStatus[key] = test.Status
+	}
+
+	expected := map[string]string{
+		"focal/amd64": "pass",
+		"jammy/amd64": "pass",
+		"noble/amd64": "fail",
+		"focal/arm64": "pass",
+		"jammy/arm64": "regression",
+		"noble/arm64": "pass",
+	}
+	for key, wantStatus := range expected {
+		got, ok := releaseArchStatus[key]
+		if !ok {
+			t.Errorf("Missing result for %s", key)
+		} else if !strings.EqualFold(got, wantStatus) {
+			t.Errorf("For %s: expected status %q, got %q", key, wantStatus, got)
 		}
 	}
 }
@@ -145,6 +212,11 @@ func TestParseHTMLWithoutErrors(t *testing.T) {
 
 	if results.Package != "test-pkg" {
 		t.Errorf("Expected package name 'test-pkg', got '%s'", results.Package)
+	}
+
+	// 2 archs × 2 releases = 4
+	if len(results.Tests) != 4 {
+		t.Errorf("Expected 4 tests, got %d", len(results.Tests))
 	}
 
 	if len(results.Errors) != 0 {
@@ -169,8 +241,95 @@ func TestParseHTMLEmpty(t *testing.T) {
 	}
 }
 
+func TestParseHTMLWithResolute(t *testing.T) {
+	s := NewScraper()
+	results, err := s.ParseHTML(mockHTMLWithResolute, "openvswitch", nil)
+
+	if err != nil {
+		t.Fatalf("ParseHTML failed: %v", err)
+	}
+
+	// 2 archs × 5 releases = 10
+	if len(results.Tests) != 10 {
+		t.Errorf("Expected 10 test results, got %d", len(results.Tests))
+	}
+
+	// Verify resolute results are present and correctly assigned
+	var resoluteResults []TestResult
+	for _, test := range results.Tests {
+		if test.Release == "resolute" {
+			resoluteResults = append(resoluteResults, test)
+		}
+	}
+	if len(resoluteResults) != 2 {
+		t.Fatalf("Expected 2 resolute results, got %d", len(resoluteResults))
+	}
+	for _, r := range resoluteResults {
+		if r.Status != "pass" {
+			t.Errorf("Expected resolute/%s to be pass, got %s", r.Architecture, r.Status)
+		}
+	}
+
+	// Verify the last release (resolute) has correct log URLs
+	for _, r := range resoluteResults {
+		expectedSuffix := "openvswitch/resolute/" + r.Architecture
+		if !strings.HasSuffix(r.LogURL, expectedSuffix) {
+			t.Errorf("Expected LogURL to end with %q, got %q", expectedSuffix, r.LogURL)
+		}
+	}
+}
+
+func TestParseHTMLWithResoluteFilter(t *testing.T) {
+	s := NewScraper()
+	filter := &Filter{Release: "resolute"}
+	results, err := s.ParseHTML(mockHTMLWithResolute, "openvswitch", filter)
+
+	if err != nil {
+		t.Fatalf("ParseHTML failed: %v", err)
+	}
+
+	if len(results.Tests) != 2 {
+		t.Errorf("Expected 2 results for resolute filter, got %d", len(results.Tests))
+	}
+
+	for _, test := range results.Tests {
+		if !strings.EqualFold(test.Release, "resolute") {
+			t.Errorf("Expected only resolute release, got %s", test.Release)
+		}
+	}
+}
+
+func TestParseHTMLWithTbody(t *testing.T) {
+	s := NewScraper()
+	results, err := s.ParseHTML(mockHTMLWithTbody, "pkg-tbody", nil)
+
+	if err != nil {
+		t.Fatalf("ParseHTML failed: %v", err)
+	}
+
+	if len(results.Tests) != 2 {
+		t.Errorf("Expected 2 tests, got %d", len(results.Tests))
+	}
+
+	// Verify correct release assignment
+	for _, test := range results.Tests {
+		if test.Architecture != "amd64" {
+			t.Errorf("Expected architecture amd64, got %s", test.Architecture)
+		}
+	}
+	releaseStatus := map[string]string{}
+	for _, test := range results.Tests {
+		releaseStatus[test.Release] = test.Status
+	}
+	if releaseStatus["jammy"] != "pass" {
+		t.Errorf("Expected jammy/amd64 = pass, got %s", releaseStatus["jammy"])
+	}
+	if releaseStatus["noble"] != "fail" {
+		t.Errorf("Expected noble/amd64 = fail, got %s", releaseStatus["noble"])
+	}
+}
+
 func TestFetchPackageResultsWithMockServer(t *testing.T) {
-	// Create a mock HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/packages/ovn" {
 			w.WriteHeader(http.StatusOK)
@@ -181,7 +340,6 @@ func TestFetchPackageResultsWithMockServer(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Create scraper with mock server URL
 	s := NewScraper()
 	s.BaseURL = server.URL
 
@@ -194,13 +352,12 @@ func TestFetchPackageResultsWithMockServer(t *testing.T) {
 		t.Errorf("Expected package name 'ovn', got '%s'", results.Package)
 	}
 
-	if len(results.Tests) < 4 {
-		t.Errorf("Expected at least 4 test results, got %d", len(results.Tests))
+	if len(results.Tests) != 6 {
+		t.Errorf("Expected 6 test results, got %d", len(results.Tests))
 	}
 }
 
 func TestFetchPackageResults404(t *testing.T) {
-	// Create a mock HTTP server that always returns 404
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -239,7 +396,6 @@ func TestReportErrors(t *testing.T) {
 		t.Error("Expected non-empty report")
 	}
 
-	// Check that report contains expected information
 	expectedStrings := []string{
 		"test-pkg",
 		"FAIL",
@@ -250,7 +406,7 @@ func TestReportErrors(t *testing.T) {
 	}
 
 	for _, expected := range expectedStrings {
-		if !contains(report, expected) {
+		if !strings.Contains(report, expected) {
 			t.Errorf("Expected report to contain '%s'", expected)
 		}
 	}
@@ -264,48 +420,8 @@ func TestReportErrorsEmpty(t *testing.T) {
 
 	report := results.ReportErrors()
 
-	if !contains(report, "No errors found") {
+	if !strings.Contains(report, "No errors found") {
 		t.Error("Expected 'No errors found' message for empty errors")
-	}
-}
-
-func TestExtractStatus(t *testing.T) {
-	// This test verifies the status extraction logic indirectly through ParseHTML
-	// since extractStatus requires an html.Node parameter
-
-	htmlWithStatus := `
-	<table>
-	<tr><td class="pass">PASS</td></tr>
-	<tr><td class="fail">FAIL</td></tr>
-	<tr><td>REGRESSION</td></tr>
-	</table>
-	`
-
-	s := NewScraper()
-	results, err := s.ParseHTML(htmlWithStatus, "test", nil)
-
-	if err != nil {
-		t.Fatalf("ParseHTML failed: %v", err)
-	}
-
-	// Just verify that status extraction is working through the parser
-	if results == nil {
-		t.Error("Expected non-nil results")
-	}
-}
-
-func TestGetNodeText(t *testing.T) {
-	htmlStr := "<div>Test <span>nested</span> text</div>"
-	s := NewScraper()
-	results, err := s.ParseHTML(htmlStr, "test", nil)
-
-	if err != nil {
-		t.Fatalf("ParseHTML failed: %v", err)
-	}
-
-	// Just verify parsing doesn't crash with nested elements
-	if results == nil {
-		t.Error("Expected non-nil results")
 	}
 }
 
@@ -318,7 +434,11 @@ func TestFilterByRelease(t *testing.T) {
 		t.Fatalf("ParseHTML with filter failed: %v", err)
 	}
 
-	// All results should be for noble release only
+	// Should have exactly 2 noble results (amd64 + arm64)
+	if len(results.Tests) != 2 {
+		t.Errorf("Expected 2 results for noble, got %d", len(results.Tests))
+	}
+
 	for _, test := range results.Tests {
 		if !strings.EqualFold(test.Release, "noble") {
 			t.Errorf("Expected only noble release, got %s", test.Release)
@@ -335,7 +455,11 @@ func TestFilterByArchitecture(t *testing.T) {
 		t.Fatalf("ParseHTML with filter failed: %v", err)
 	}
 
-	// All results should be for amd64 architecture only
+	// Should have exactly 3 amd64 results (focal + jammy + noble)
+	if len(results.Tests) != 3 {
+		t.Errorf("Expected 3 results for amd64, got %d", len(results.Tests))
+	}
+
 	for _, test := range results.Tests {
 		if !strings.EqualFold(test.Architecture, "amd64") {
 			t.Errorf("Expected only amd64 architecture, got %s", test.Architecture)
@@ -355,24 +479,23 @@ func TestFilterByReleaseAndArchitecture(t *testing.T) {
 		t.Fatalf("ParseHTML with filter failed: %v", err)
 	}
 
-	// Should have exactly 1 result: jammy + arm64
 	if len(results.Tests) != 1 {
-		t.Errorf("Expected 1 result for jammy/arm64, got %d", len(results.Tests))
+		t.Fatalf("Expected 1 result for jammy/arm64, got %d", len(results.Tests))
 	}
 
-	if len(results.Tests) > 0 {
-		test := results.Tests[0]
-		if !strings.EqualFold(test.Release, "jammy") {
-			t.Errorf("Expected jammy release, got %s", test.Release)
-		}
-		if !strings.EqualFold(test.Architecture, "arm64") {
-			t.Errorf("Expected arm64 architecture, got %s", test.Architecture)
-		}
+	test := results.Tests[0]
+	if !strings.EqualFold(test.Release, "jammy") {
+		t.Errorf("Expected jammy release, got %s", test.Release)
+	}
+	if !strings.EqualFold(test.Architecture, "arm64") {
+		t.Errorf("Expected arm64 architecture, got %s", test.Architecture)
+	}
+	if !strings.EqualFold(test.Status, "regression") {
+		t.Errorf("Expected regression status for jammy/arm64, got %s", test.Status)
 	}
 }
 
 func TestFetchPackageResultsFiltered(t *testing.T) {
-	// Create a mock HTTP server
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/packages/ovn" {
 			w.WriteHeader(http.StatusOK)
@@ -383,7 +506,6 @@ func TestFetchPackageResultsFiltered(t *testing.T) {
 	}))
 	defer server.Close()
 
-	// Create scraper with mock server URL
 	s := NewScraper()
 	s.BaseURL = server.URL
 
@@ -393,7 +515,10 @@ func TestFetchPackageResultsFiltered(t *testing.T) {
 		t.Fatalf("FetchPackageResultsFiltered failed: %v", err)
 	}
 
-	// All results should be for noble
+	if len(results.Tests) != 2 {
+		t.Errorf("Expected 2 results for noble, got %d", len(results.Tests))
+	}
+
 	for _, test := range results.Tests {
 		if !strings.EqualFold(test.Release, "noble") {
 			t.Errorf("Expected only noble release, got %s", test.Release)
@@ -401,18 +526,45 @@ func TestFetchPackageResultsFiltered(t *testing.T) {
 	}
 }
 
-// Helper function to check if a string contains a substring
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > len(substr) &&
-		(s[:len(substr)] == substr || s[len(s)-len(substr):] == substr ||
-			len(s) > len(substr) && findSubstring(s, substr)))
-}
+func TestLogURLsAreAbsolute(t *testing.T) {
+	s := NewScraper()
+	results, err := s.ParseHTML(mockHTMLWithErrors, "ovn", nil)
 
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+	if err != nil {
+		t.Fatalf("ParseHTML failed: %v", err)
+	}
+
+	for _, test := range results.Tests {
+		if test.LogURL != "" && !strings.HasPrefix(test.LogURL, "https://") {
+			t.Errorf("LogURL should be absolute, got %s", test.LogURL)
 		}
 	}
-	return false
+}
+
+func TestReleaseAlignmentAcrossAllColumns(t *testing.T) {
+	// Regression test: verify that each test result has the correct release
+	// assigned, particularly for the last column (which was previously
+	// dropped due to an off-by-one error).
+	s := NewScraper()
+	results, err := s.ParseHTML(mockHTMLWithResolute, "openvswitch", nil)
+
+	if err != nil {
+		t.Fatalf("ParseHTML failed: %v", err)
+	}
+
+	// Build map of LogURL suffix → release for verification.
+	// The href in the HTML encodes the correct release, so we can cross-check.
+	for _, test := range results.Tests {
+		// LogURL looks like "https://autopkgtest.ubuntu.com/openvswitch/<release>/<arch>"
+		parts := strings.Split(test.LogURL, "/")
+		if len(parts) < 3 {
+			t.Errorf("Unexpected LogURL format: %s", test.LogURL)
+			continue
+		}
+		urlRelease := parts[len(parts)-2]
+		if !strings.EqualFold(urlRelease, test.Release) {
+			t.Errorf("Release mismatch: TestResult.Release=%q but LogURL contains release=%q (URL: %s)",
+				test.Release, urlRelease, test.LogURL)
+		}
+	}
 }
