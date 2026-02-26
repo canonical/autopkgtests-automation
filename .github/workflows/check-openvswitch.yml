@@ -1,4 +1,4 @@
-name: Check OVS Autopkgtests
+name: Check OVS Autopkgtests (resolute)
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   check-openvswitch:
-    name: Check OpenVSwitch Package Tests
+    name: Check OpenVSwitch Package Tests (resolute)
     runs-on: ubuntu-latest
     
     steps:
@@ -26,7 +26,7 @@ jobs:
       - name: Check OpenVSwitch autopkgtests
         run: |
           # Run the autopkgtest-cli tool for openvswitch package
-          ./build/autopkgtest-cli check -package openvswitch
+          ./build/autopkgtest-cli check -package openvswitch -release resolute --arch amd64,arm64,ppc64el,riscv64,s390x
           
           # The tool exits with non-zero status if tests are in error state,
           # this will cause the workflow to fail

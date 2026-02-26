@@ -1,4 +1,4 @@
-name: Check OVN Autopkgtests
+name: Check OVN Autopkgtests (resolute)
 
 on:
   schedule:
@@ -8,7 +8,7 @@ on:
 
 jobs:
   check-ovn:
-    name: Check OVN Package Tests
+    name: Check OVN Package Tests (resolute)
     runs-on: ubuntu-latest
     
     steps:
@@ -26,7 +26,7 @@ jobs:
       - name: Check OVN autopkgtests
         run: |
           # Run the autopkgtest-cli tool for ovn package
-          ./build/autopkgtest-cli check -package ovn
+          ./build/autopkgtest-cli check -package ovn -release resolute --arch amd64,arm64,ppc64el,riscv64,s390x
           
           # The tool exits with non-zero status if tests are in error state,
           # this will cause the workflow to fail
