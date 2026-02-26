@@ -46,6 +46,16 @@ jobs:
     if: github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch'
     
     steps:
+      - name: Validate authentication secret
+        env:
+          AUTOPKGTEST_COOKIE: ${{ secrets.AUTOPKGTEST_COOKIE }}
+        run: |
+          if [ -z "$AUTOPKGTEST_COOKIE" ]; then
+            echo "::error::AUTOPKGTEST_COOKIE secret is not set or empty. Please configure the repository secret with a valid session cookie."
+            exit 1
+          fi
+        shell: bash
+
       - name: Checkout code
         uses: actions/checkout@v4
       
